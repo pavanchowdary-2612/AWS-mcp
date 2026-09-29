@@ -1,0 +1,66 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: aws-chatbot-redis-prod
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "${REDIS_PASSWORD:-supersecret123}"
+    volumes:
+      - redis_data_prod:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-supersecret123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aws-chatbot-backend-prod
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.prod
+    environment:
+      # In prod, we use the Redis container with AUTH
+      REDIS_URL: redis://:${REDIS_PASSWORD:-supersecret123}@redis:6379/0
+      # Ensure cookie is secure
+      SESSION_COOKIE_SECURE: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+    # We do NOT expose port 8000 here. Nginx (frontend) will proxy the requests to it inside the Docker network.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - internal
+    # Notice: We removed the ~/.aws bind mount. 
+    # In production, this container inherits permissions from the EC2 Instance Profile or ECS Task Role.
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: aws-chatbot-frontend-prod
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+      - public
+
+volumes:
+  redis_data_prod:
+
+networks:
+  internal:
+    driver: bridge
+  public:
+    driver: bridge

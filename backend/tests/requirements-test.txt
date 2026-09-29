@@ -1,0 +1,4 @@
+pytest
+pytest-asyncio
+fakeredis
+httpx  # for testing FastAPI with TestClient
